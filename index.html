@@ -20,6 +20,7 @@ label{display:flex;flex-direction:column;font-size:12px;color:var(--mu);gap:3px;
 .sticky{position:sticky;bottom:0;background:var(--card);padding:8px 0 calc(6px + env(safe-area-inset-bottom,0px));margin-top:8px;border-top:1px solid var(--bd)}
 input,select,textarea,button{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;min-width:0}
 input.changed,select.changed{background:var(--ch)}
+select.r3{color:#c62828;font-weight:700}
 button{cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac);font-weight:600}
 button:disabled{opacity:.5;cursor:default}
 #scan{font-size:20px;padding:12px;width:100%;border:2px solid var(--ac)}
@@ -335,6 +336,7 @@ function open(code) {
     setHint('RSL, RISO, IEA und IBer stammen aus dem Vorjahr. Bitte nur überschreiben, wenn die Messung abweicht.');
     $('g').value = ''; $('b').value = '';
     $('p').value = 'Ja'; $('o').value = str(old[14]) || '1';
+    applyRate3();
     // Vorschläge
     if (str(old[6]) || (str(old[5]) && str(old[5]) !== '1'))
       setHint('Vorjahr: Bewertung ' + str(old[5]) + (str(old[6]) ? ', „' + str(old[6]) + '“' : '') + ' – bitte prüfen, ob der Mangel noch besteht.');
@@ -352,11 +354,23 @@ function open(code) {
 }
 
 const PE = 'Kein PE-Messpunkt';
-function pe() { // SK I ohne RSL → Kommentar „Kein PE-Messpunkt“, sonst wieder entfernen
-  const g = $('g'), has = g.value.includes(PE);
-  if ($('t').value === 'I' && !$('k').value.trim()) { if (!has) g.value = g.value.trim() ? g.value.trim() + '; ' + PE : PE; }
-  else if (has) g.value = g.value.replace(PE, '').replace(/^[;\s]+|[;\s]+$/g, '').replace(/;\s*;/g, ';');
+const PEF = 'PE Fehler';
+const tidy = t => t.replace(/^[;\s]+|[;\s]+$/g, '').replace(/;\s*;/g, ';');
+function pe() { // SK I ohne RSL → Kommentar „Kein PE-Messpunkt“ (genau einmal), sonst entfernen; nicht bei Bewertung 3
+  const g = $('g'), has = g.value.includes(PE), want = $('t').value === 'I' && !$('k').value.trim() && $('f').value !== '3';
+  if (want && g.value.split(PE).length === 2) return;
+  const rest = tidy(g.value.split(PE).join(''));
+  g.value = want ? (rest ? rest + '; ' + PE : PE) : (has ? rest : g.value);
 }
+function applyRate3() { // Bewertung 3: Messwerte leer, Kommentar „PE Fehler“; sonst „PE Fehler“ wieder entfernen
+  const g = $('g');
+  if ($('f').value === '3') {
+    ['k', 'l', 'm', 'n'].forEach(k => $(k).value = '');
+    const rest = tidy(g.value.split(PE).join('').split(PEF).join(''));
+    g.value = rest ? rest + '; ' + PEF : PEF;
+  } else if (g.value.includes(PEF)) g.value = tidy(g.value.split(PEF).join(''));
+}
+$('f').addEventListener('change', () => { applyRate3(); mark(); });
 function limitIssues(v) { // Grenzwerte: RSL ≤ 0,30 Ω, IEA/IBer ≤ 3,50 mA, RISO ≥ 1 (SK I) / 2 (SK II) / 0,25 (SK III) MΩ
   const o = [], r = num(v.k), ri = num(v.l), ia = num(v.m), ib = num(v.n), min = { I: 1, II: 2, III: 0.25 }[v.t];
   if (!isNaN(r) && r > 0.30) o.push('RSL ' + v.k + ' Ω ist über dem Grenzwert 0,30 Ω.');
@@ -366,8 +380,9 @@ function limitIssues(v) { // Grenzwerte: RSL ≤ 0,30 Ω, IEA/IBer ≤ 3,50 mA, 
   return o;
 }
 const formVals = () => { const v = {}; FIELDS.forEach(k => v[k] = $(k).value.trim()); return v; };
-function mark() { // geänderte Felder gelb markieren + Plausibilitätshinweise
-  pe();
+function mark(skipPe) { // geänderte Felder gelb markieren + Plausibilitätshinweise
+  if (!skipPe) pe();
+  $('f').classList.toggle('r3', $('f').value === '3');
   FIELDS.forEach(k => $(k).classList.toggle('changed', !!prevRow && COL[k] !== undefined && $(k).value !== str(prevRow[COL[k]])));
   document.querySelectorAll('.hint.live').forEach(e => e.remove());
   const live = t => { const d = document.createElement('div'); d.className = 'hint live'; d.textContent = t; $('hints').appendChild(d); };
@@ -375,12 +390,11 @@ function mark() { // geänderte Felder gelb markieren + Plausibilitätshinweise
   limitIssues(formVals()).forEach(t => live('⚠ ' + t));
   if (!isNaN(ia) && !isNaN(ia0) && ia > ia0 * 2 + 0.2) live('IEA ist mehr als doppelt so hoch wie im Vorjahr (' + str(prevRow[12]) + ' mA).');
 }
-FIELDS.forEach(k => $(k).addEventListener('input', () => { if (k === 'm') $('n').value = $('m').value; mark(); }));
+FIELDS.forEach(k => $(k).addEventListener('input', () => { if (k === 'm') $('n').value = $('m').value; mark(k === 'g'); }));
 
 $('cancel').onclick = () => { $('formCard').hidden = true; cur = null; $('scan').focus(); };
 $('save').onclick = () => {
   if (!cur) return;
-  pe();
   const v = {}; FIELDS.forEach(k => v[k] = $(k).value.trim());
   done.set(cur, { code: cur, isNew: !prevRow && !(done.get(cur) && !done.get(cur).isNew), date: $('datum').value, v });
   persist(); $('formCard').hidden = true; cur = null; refresh(); $('scan').focus();
